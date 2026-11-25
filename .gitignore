@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.vercel/
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm
+data/*.tmp
+.env
+.env.*
+!.env.example
+*.zip
+.DS_Store
