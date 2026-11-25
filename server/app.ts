@@ -4,6 +4,7 @@ import { db, initSchema } from './db.js';
 import {
   acquireMongoWriteLock,
   formatMongoError,
+  getDetectedMongoEnvName,
   getMongoDatabase,
   isCloudDeploymentEnvironment,
   isMongoConfigured,
@@ -22,6 +23,7 @@ export async function getExpressApp(): Promise<Express> {
       app.use(express.json({ limit: '5mb' }));
 
       app.get('/api/health', async (_req, res) => {
+        const envVar = getDetectedMongoEnvName();
         if (isMongoConfigured()) {
           try {
             const mongoDb = await getMongoDatabase();
@@ -31,6 +33,7 @@ export async function getExpressApp(): Promise<Express> {
               service: 'KoshBill ERP API',
               storage_mode: 'mongodb',
               mongodb_connected: true,
+              env_var: envVar,
               database_name: mongoDb.databaseName,
             });
             return;
@@ -38,8 +41,9 @@ export async function getExpressApp(): Promise<Express> {
             res.status(503).json({
               status: 'error',
               service: 'KoshBill ERP API',
-              storage_mode: 'mongodb',
+              storage_mode: 'mongodb_error',
               mongodb_connected: false,
+              env_var: envVar,
               error: formatMongoError(err),
             });
             return;
@@ -51,6 +55,7 @@ export async function getExpressApp(): Promise<Express> {
           service: 'KoshBill ERP API',
           storage_mode: isCloudDeploymentEnvironment() ? 'unconfigured_cloud' : 'local',
           mongodb_connected: false,
+          env_var: null,
         });
       });
 
@@ -62,7 +67,7 @@ export async function getExpressApp(): Promise<Express> {
         if (isCloudDeploymentEnvironment() && !isMongoConfigured() && !isReadOnly) {
           res.status(503).json({
             error:
-              'MongoDB Atlas is not connected yet! Add your MONGODB_URI variable in Vercel / Render -> Settings -> Environment Variables and redeploy.',
+              'MongoDB Atlas is not connected yet! Add KBE_MONGODB_URI in Vercel / Render -> Settings -> Environment Variables and redeploy.',
           });
           return;
         }
@@ -77,15 +82,16 @@ export async function getExpressApp(): Promise<Express> {
             await db.ensureSyncedFromMongo(false);
             next();
           } catch (err: any) {
+            if (req.path === '/meta/states') {
+              (req as any).mongoSyncError = formatMongoError(err);
+              next();
+              return;
+            }
             res.status(503).json({ error: formatMongoError(err) });
           }
           return;
         }
 
-        // Mutating request (POST / PUT / PATCH / DELETE):
-        // 1. Acquire distributed MongoDB write lease
-        // 2. Ensure memory engine has latest revision
-        // 3. Flush row-level diffs to MongoDB BEFORE sending HTTP response
         const lockOwner = crypto.randomUUID();
         let lockReleased = false;
         const releaseOnce = async () => {
@@ -147,7 +153,10 @@ export async function getExpressApp(): Promise<Express> {
       });
 
       return app;
-    })();
+    })().catch((err) => {
+      appPromise = null;
+      throw err;
+    });
   }
 
   return appPromise;

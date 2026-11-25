@@ -916,6 +916,12 @@ export async function initSchema() {
   db.markSchemaInitialized();
 
   if (isMongoConfigured()) {
-    await db.hydrateFromMongo();
+    try {
+      await db.hydrateFromMongo();
+    } catch (err) {
+      // Allow server to boot cleanly so /api/meta/states and /api/health can surface diagnostics
+      // and automatically retry hydration on the next incoming request.
+      console.warn('Initial MongoDB hydration deferred:', err);
+    }
   }
 }

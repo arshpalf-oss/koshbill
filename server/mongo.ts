@@ -39,13 +39,61 @@ declare global {
   var __koshbillMongoIndexesReady: boolean | undefined;
 }
 
+function cleanEnvUri(raw: string | undefined): string {
+  if (!raw) return '';
+  let val = raw.trim();
+  if (
+    (val.startsWith('"') && val.endsWith('"')) ||
+    (val.startsWith("'") && val.endsWith("'"))
+  ) {
+    val = val.slice(1, -1).trim();
+  }
+  return val;
+}
+
+const PRIORITY_MONGO_ENV_KEYS = [
+  'KBE_MONGODB_URI',
+  'KBE_MONGO_URI',
+  'KBE_MONGODB_URL',
+  'MONGODB_URI',
+  'MONGO_URI',
+  'MONGODB_URL',
+] as const;
+
+export function resolveMongoEnvEntry(): { name: string; uri: string } | null {
+  for (const key of PRIORITY_MONGO_ENV_KEYS) {
+    const cleaned = cleanEnvUri(process.env[key]);
+    if (cleaned) {
+      return { name: key, uri: cleaned };
+    }
+  }
+
+  const dbUrl = cleanEnvUri(process.env.DATABASE_URL);
+  if (/^mongodb(\+srv)?:\/\//i.test(dbUrl)) {
+    return { name: 'DATABASE_URL', uri: dbUrl };
+  }
+
+  // Also auto-detect any custom-prefixed Vercel MongoDB integration variable
+  for (const [key, rawVal] of Object.entries(process.env)) {
+    const cleaned = cleanEnvUri(rawVal);
+    if (!cleaned) continue;
+    if (
+      /_(MONGODB_URI|MONGO_URI|MONGODB_URL)$/i.test(key) ||
+      /^mongodb(\+srv)?:\/\//i.test(cleaned)
+    ) {
+      return { name: key, uri: cleaned };
+    }
+  }
+
+  return null;
+}
+
+export function getDetectedMongoEnvName(): string | null {
+  return resolveMongoEnvEntry()?.name || null;
+}
+
 export function getMongoUri(): string {
-  return (
-    process.env.MONGODB_URI ||
-    process.env.MONGO_URI ||
-    process.env.MONGODB_URL ||
-    ''
-  ).trim();
+  return resolveMongoEnvEntry()?.uri || '';
 }
 
 export function isCloudDeploymentEnvironment(): boolean {
@@ -63,11 +111,16 @@ export function isMongoConfigured(): boolean {
 }
 
 function resolveMongoDbName(uri: string): string {
-  if (process.env.MONGODB_DB_NAME?.trim()) {
-    return process.env.MONGODB_DB_NAME.trim();
+  const explicitDb =
+    process.env.KBE_MONGODB_DB_NAME ||
+    process.env.KBE_MONGODB_DB ||
+    process.env.MONGODB_DB_NAME ||
+    process.env.MONGODB_DB ||
+    '';
+  if (explicitDb.trim()) {
+    return explicitDb.trim();
   }
   try {
-    // Extract pathname between host/ and ?query
     const withoutScheme = uri.replace(/^mongodb(\+srv)?:\/\//i, '');
     const slashIdx = withoutScheme.indexOf('/');
     if (slashIdx !== -1) {
@@ -87,10 +140,10 @@ function resolveMongoDbName(uri: string): string {
 export function formatMongoError(err: any): string {
   const msg = String(err?.message || err || 'Unknown MongoDB error');
   if (/bad auth|authentication failed/i.test(msg)) {
-    return 'MongoDB authentication failed. Please check the username and password in MONGODB_URI (URL-encode special characters like @ or # in passwords).';
+    return 'MongoDB authentication failed. Please check the username and password in KBE_MONGODB_URI (URL-encode special characters like @ or # in passwords).';
   }
   if (/ServerSelection|timed out|ECONNREFUSED|ENOTFOUND|whitelist|IP/i.test(msg)) {
-    return 'Could not reach MongoDB Atlas. Verify MONGODB_URI and ensure MongoDB Atlas -> Network Access has 0.0.0.0/0 ("Allow Access from Anywhere") enabled.';
+    return 'Could not reach MongoDB Atlas. Verify KBE_MONGODB_URI and ensure MongoDB Atlas -> Network Access has 0.0.0.0/0 ("Allow Access from Anywhere") enabled.';
   }
   return msg;
 }
@@ -98,15 +151,15 @@ export function formatMongoError(err: any): string {
 export async function getMongoDatabase(): Promise<Db> {
   const uri = getMongoUri();
   if (!uri) {
-    throw new Error('MONGODB_URI environment variable is not set.');
+    throw new Error('KBE_MONGODB_URI environment variable is not set.');
   }
 
   if (!globalThis.__koshbillMongoClientPromise) {
     const client = new MongoClient(uri, {
       maxPoolSize: 10,
       minPoolSize: 0,
-      serverSelectionTimeoutMS: 8000,
-      connectTimeoutMS: 8000,
+      serverSelectionTimeoutMS: 15000,
+      connectTimeoutMS: 15000,
     });
     globalThis.__koshbillMongoClientPromise = client.connect().catch((err) => {
       globalThis.__koshbillMongoClientPromise = undefined;
@@ -146,13 +199,13 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function acquireMongoWriteLock(ownerId: string, maxWaitMs = 10000): Promise<void> {
+export async function acquireMongoWriteLock(ownerId: string, maxWaitMs = 12000): Promise<void> {
   const mongoDb = await getMongoDatabase();
   const meta = mongoDb.collection<{ _id: string; locked_until: number; owner: string }>(
     '_engine_meta'
   );
   const deadline = Date.now() + maxWaitMs;
-  const leaseMs = 12000;
+  const leaseMs = 15000;
 
   while (Date.now() < deadline) {
     const now = Date.now();
@@ -174,7 +227,6 @@ export async function acquireMongoWriteLock(ownerId: string, maxWaitMs = 10000):
         return;
       }
     } catch (err: any) {
-      // Duplicate key error (E11000) when another concurrent writer currently holds the lock
       if (err?.code !== 11000) {
         throw new Error(formatMongoError(err));
       }

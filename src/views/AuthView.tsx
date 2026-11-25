@@ -13,7 +13,9 @@ import { IndianState, Organization, User } from '../types';
 interface AuthViewProps {
   states: IndianState[];
   hasUsers?: boolean;
-  storageMode?: 'mongodb' | 'local' | 'unconfigured_cloud';
+  storageMode?: 'mongodb' | 'local' | 'unconfigured_cloud' | 'mongodb_error';
+  mongoError?: string | null;
+  detectedEnvVar?: string | null;
   onAuthenticated: (payload: {
     user: User;
     organization: Organization;
@@ -25,6 +27,8 @@ export const AuthView: React.FC<AuthViewProps> = ({
   states,
   hasUsers = true,
   storageMode = 'local',
+  mongoError = null,
+  detectedEnvVar = null,
   onAuthenticated,
 }) => {
   const [tab, setTab] = useState<'LOGIN' | 'REGISTER'>(hasUsers ? 'LOGIN' : 'REGISTER');
@@ -196,19 +200,30 @@ export const AuthView: React.FC<AuthViewProps> = ({
               <div className="font-bold">Almost ready — Connect your MongoDB Atlas URI!</div>
               <div className="text-amber-900 leading-relaxed">
                 1. In MongoDB Atlas, enable <span className="font-mono font-semibold">0.0.0.0/0</span> under <b>Network Access</b> and copy your <span className="font-mono font-semibold">mongodb+srv://...</span> connection string.<br />
-                2. In Vercel / Render <b>Settings → Environment Variables</b>, add <span className="font-mono font-semibold">MONGODB_URI</span> and redeploy.
+                2. In Vercel / Render <b>Settings → Environment Variables</b>, add <span className="font-mono font-semibold">KBE_MONGODB_URI</span> (ensuring <b>Production</b> & <b>Preview</b> are checked) and redeploy.
               </div>
             </div>
           )}
 
-          {!hasUsers && storageMode !== 'unconfigured_cloud' && (
-            <div className="rounded-2xl border border-teal-200 bg-teal-50/70 px-4 py-3.5 text-xs text-teal-900">
-              <div className="font-bold">Welcome to KoshBill Cloud ERP</div>
-              <div className="mt-0.5 text-teal-800">
-                Register your business below to get your own private, isolated inventory, GST/Non-GST billing, BV & Khata ledger workspace.
+          {storageMode === 'mongodb_error' && (
+            <div className="rounded-2xl border border-rose-300 bg-rose-50 px-4 py-3.5 text-xs text-rose-950 space-y-1">
+              <div className="font-bold">
+                Detected {detectedEnvVar || 'KBE_MONGODB_URI'}, but MongoDB Atlas returned an error:
               </div>
+              <div className="text-rose-900 leading-relaxed">{mongoError}</div>
             </div>
           )}
+
+          {!hasUsers &&
+            storageMode !== 'unconfigured_cloud' &&
+            storageMode !== 'mongodb_error' && (
+              <div className="rounded-2xl border border-teal-200 bg-teal-50/70 px-4 py-3.5 text-xs text-teal-900">
+                <div className="font-bold">Welcome to KoshBill Cloud ERP</div>
+                <div className="mt-0.5 text-teal-800">
+                  Register your business below to get your own private, isolated inventory, GST/Non-GST billing, BV & Khata ledger workspace.
+                </div>
+              </div>
+            )}
 
           {/* Auth Card */}
           <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-7 shadow-xs">

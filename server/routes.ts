@@ -1,6 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { db, generateToken, hashPassword, verifyPassword } from './db.js';
-import { isCloudDeploymentEnvironment, isMongoConfigured } from './mongo.js';
+import {
+  getDetectedMongoEnvName,
+  isCloudDeploymentEnvironment,
+  isMongoConfigured,
+} from './mongo.js';
 import { buildUpiPaymentUri, INDIAN_STATES, round2 } from './constants.js';
 import {
   adjustBatchStock,
@@ -76,10 +80,13 @@ function createSessionForUser(userId: number, orgId: number): string {
 // PUBLIC / AUTH ROUTES
 // ============================================================================
 
-apiRouter.get('/meta/states', (_req, res) => {
+apiRouter.get('/meta/states', (req, res) => {
+  const mongoSyncError = (req as any).mongoSyncError as string | undefined;
   const row = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
   const storageMode = isMongoConfigured()
-    ? 'mongodb'
+    ? mongoSyncError
+      ? 'mongodb_error'
+      : 'mongodb'
     : isCloudDeploymentEnvironment()
       ? 'unconfigured_cloud'
       : 'local';
@@ -87,7 +94,9 @@ apiRouter.get('/meta/states', (_req, res) => {
     states: INDIAN_STATES,
     has_users: (row?.count || 0) > 0,
     storage_mode: storageMode,
-    mongodb_connected: isMongoConfigured(),
+    mongodb_connected: isMongoConfigured() && !mongoSyncError,
+    env_var: getDetectedMongoEnvName(),
+    mongodb_error: mongoSyncError || null,
   });
 });
 

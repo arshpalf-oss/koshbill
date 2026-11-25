@@ -49,7 +49,11 @@ export function App() {
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [states, setStates] = useState<IndianState[]>([]);
   const [hasUsers, setHasUsers] = useState<boolean>(true);
-  const [storageMode, setStorageMode] = useState<'mongodb' | 'local' | 'unconfigured_cloud'>('local');
+  const [storageMode, setStorageMode] = useState<
+    'mongodb' | 'local' | 'unconfigured_cloud' | 'mongodb_error'
+  >('local');
+  const [mongoError, setMongoError] = useState<string | null>(null);
+  const [detectedEnvVar, setDetectedEnvVar] = useState<string | null>(null);
 
   const [activeNav, setActiveNav] = useState<NavSection>('dashboard');
   const [subAction, setSubAction] = useState<string | undefined>(undefined);
@@ -81,12 +85,16 @@ export function App() {
       apiFetch<{
         states: IndianState[];
         has_users?: boolean;
-        storage_mode?: 'mongodb' | 'local' | 'unconfigured_cloud';
+        storage_mode?: 'mongodb' | 'local' | 'unconfigured_cloud' | 'mongodb_error';
+        mongodb_error?: string | null;
+        env_var?: string | null;
       }>('/meta/states')
         .then((r) => {
           setStates(r.states || []);
           setHasUsers(Boolean(r.has_users));
           if (r.storage_mode) setStorageMode(r.storage_mode);
+          setMongoError(r.mongodb_error || null);
+          setDetectedEnvVar(r.env_var || null);
         })
         .catch(() => {})
         .finally(() => setBooting(false));
@@ -105,11 +113,15 @@ export function App() {
         return apiFetch<{
           states: IndianState[];
           has_users?: boolean;
-          storage_mode?: 'mongodb' | 'local' | 'unconfigured_cloud';
+          storage_mode?: 'mongodb' | 'local' | 'unconfigured_cloud' | 'mongodb_error';
+          mongodb_error?: string | null;
+          env_var?: string | null;
         }>('/meta/states').then((r) => {
           setStates(r.states || []);
           setHasUsers(Boolean(r.has_users));
           if (r.storage_mode) setStorageMode(r.storage_mode);
+          setMongoError(r.mongodb_error || null);
+          setDetectedEnvVar(r.env_var || null);
         });
       })
       .finally(() => setBooting(false));
@@ -229,6 +241,8 @@ export function App() {
         states={states}
         hasUsers={hasUsers}
         storageMode={storageMode}
+        mongoError={mongoError}
+        detectedEnvVar={detectedEnvVar}
         onAuthenticated={(payload) => {
           setUser(payload.user);
           setOrganization(payload.organization);
